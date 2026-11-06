@@ -1,7 +1,8 @@
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 const $ = id => document.getElementById(id);
-let W, H, dpr, TOP = 76;
+let W, H, dpr, TOP = 76, PX = 4;
+const lowCv = document.createElement('canvas'), lctx = lowCv.getContext('2d');
 
 function resize() {
   dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -10,6 +11,8 @@ function resize() {
   canvas.width = Math.round(W * dpr);
   canvas.height = Math.round(H * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  PX = Math.max(3, Math.min(6, Math.round(Math.min(W, H) / 110)));
+  lowCv.width = Math.ceil(W / PX); lowCv.height = Math.ceil(H / PX);
   TOP = $('hud').offsetTop + $('hud').offsetHeight + 10;
 }
 window.addEventListener('resize', resize);
@@ -17,7 +20,7 @@ resize();
 
 let best = 0;
 try { best = Number(localStorage.getItem('rc_best')) || 0; } catch (_) { /* Storage may be disabled. */ }
-const COLORS = ['#ff6b6b', '#ffd166', '#06d6a0', '#ff8fd0', '#4cc9f0', '#fff'];
+const COLORS = ['#ff6b6b', '#ffd166', '#06d6a0', '#ff8fd0', '#4cc9f0', '#ffffff'];
 let slots = 4, rippleId = 0, refunded = false, level = 1, score = 0;
 let taps = 4, popped = 0, target = 4;
 let orbs = [], ripples = [], particles = [], links = [], floats = [];
@@ -77,7 +80,7 @@ function makeOrbs(count) {
       x: 30 + Math.random() * Math.max(1, W - 60),
       y: TOP + 30 + Math.random() * Math.max(60, H - TOP - 60),
       vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-      r: kind === 'bomb' || kind === 'magnet' ? 16 : 10 + Math.random() * 5,
+      r: PX * (kind === 'bomb' || kind === 'magnet' || kind === 'super' ? 5 : 3.5 + Math.random() * 1.5),
       color: kind === 'super' ? '#ffd166' : COLORS[i % COLORS.length],
       phase: Math.random() * Math.PI * 2, born: time + i * 0.04,
       kind, hp: kind === 'shield' ? 2 : 1, lastRipple: 0
@@ -111,7 +114,7 @@ function setup() {
 
 function updateHud() {
   const realm = level <= 3 ? 'Heaven' : level <= 6 ? 'Purgatory' : 'Hell';
-  $('lv').textContent = `${realm} - Level ${level}`;
+  $('lv').textContent = `${realm} ${level}`;
   $('sc').textContent = score + (best ? ` / ${best}` : '');
   $('pt').textContent = `${popped}/${target}`;
   slots = Math.max(slots, taps);
@@ -251,61 +254,43 @@ function update(dt) {
   }
 }
 
-const GRID_GAP = 34;
 function draw() {
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.globalAlpha = 1;
-  renderBackgroundAndSprites(ctx, W, H, frameDelta);
-  ctx.save();
-  if (shake > 0.1) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
-  const offsetX = (W % GRID_GAP) / 2, offsetY = (H % GRID_GAP) / 2;
-  ctx.fillStyle = '#fff';
-  for (let y = offsetY; y < H; y += GRID_GAP) for (let x = offsetX; x < W; x += GRID_GAP) {
-    let px = x, py = y, strength = 0;
-    for (const ripple of ripples) {
-      const dx = x - ripple.x, dy = y - ripple.y, distance = Math.hypot(dx, dy);
-      const wave = (distance - ripple.r) / 16;
-      const influence = Math.exp(-wave * wave) * (1 - ripple.life);
-      if (influence > 0.02) { strength += influence; if (distance > 0) { px += dx / distance * influence * 9; py += dy / distance * influence * 9; } }
-    }
-    strength = Math.min(strength, 1);
-    ctx.globalAlpha = 0.12 + 0.5 * strength;
-    ctx.beginPath(); ctx.arc(px, py, 1.6 + 2.6 * strength, 0, Math.PI * 2); ctx.fill();
+  const g = lctx, lw = lowCv.width, lh = lowCv.height, S = PX;
+  g.imageSmoothingEnabled = false; g.globalAlpha = 1;
+  renderBackgroundAndSprites(g, lw, lh, frameDelta);
+  const GAP = 8, ox = (lw % GAP) >> 1, oy = (lh % GAP) >> 1;
+  const rs = ripples.map(r => ({ x: r.x / S, y: r.y / S, r: r.r / S, life: r.life }));
+  g.fillStyle = '#ffffff';
+  for (let y = oy; y < lh; y += GAP) for (let x = ox; x < lw; x += GAP) {
+    let px = x, py = y, k = 0;
+    for (const r of rs) { const dx = x - r.x, dy = y - r.y, d = Math.hypot(dx, dy), w = (d - r.r) / 3, inf = Math.exp(-w * w) * (1 - r.life);
+      if (inf > 0.05) { k += inf; if (d) { px += dx / d * inf * 2; py += dy / d * inf * 2; } } }
+    g.globalAlpha = k > 0.15 ? 0.9 : 0.28; const s = k > 0.5 ? 2 : 1; g.fillRect(Math.round(px), Math.round(py), s, s);
   }
-  ctx.globalAlpha = 1;
-  for (const link of links) {
-    ctx.globalAlpha = link.life * 0.8; ctx.strokeStyle = '#fff'; ctx.lineWidth = 3 * link.life;
-    ctx.setLineDash([2, 9]); ctx.beginPath(); ctx.moveTo(link.x1, link.y1); ctx.lineTo(link.x2, link.y2); ctx.stroke();
+  g.globalAlpha = 1; g.fillStyle = '#ffffff';
+  for (const l of links) { const n = Math.max(2, Math.round(Math.hypot(l.x2 - l.x1, l.y2 - l.y1) / S / 3));
+    for (let i = 0; i <= n; i++) if (i % 2 === 0 || l.life > 0.5) g.fillRect(Math.round((l.x1 + (l.x2 - l.x1) * i / n) / S), Math.round((l.y1 + (l.y2 - l.y1) * i / n) / S), 1, 1); }
+  for (const r of ripples) {
+    const cx = Math.round(r.x / S), cy = Math.round(r.y / S), R = Math.round(r.r / S); if (R < 1) continue;
+    pxDither(g, cx, cy, R, '#ffffff', r.life < 0.4 ? 1 : r.life < 0.75 ? 2 : 0);
+    const th = r.life < 0.5 ? 2 : 1; pxRing(g, cx, cy, R, Math.max(0, R - th), '#ffffff');
+    if (R > 4) pxRing(g, cx, cy, R - th - 1, Math.max(0, R - th - 2), '#9fe7ff');
   }
-  ctx.setLineDash([]);
-  for (const ripple of ripples) {
-    const alpha = 1 - ripple.life * ripple.life;
-    ctx.globalAlpha = 0.14 * alpha; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ripple.x, ripple.y, ripple.r, 0, Math.PI * 2); ctx.fill();
-    ctx.globalAlpha = alpha; ctx.strokeStyle = '#fff'; ctx.lineWidth = 4 * (1 - ripple.life) + 1.5; ctx.stroke();
+  for (const o of orbs) {
+    const b = Math.max(0, Math.min(1, (time - o.born) / 0.5)); if (b <= 0) continue;
+    drawOrb(g, Math.round(o.x / S), Math.round(o.y / S) + Math.round(Math.sin(time * 2 + o.phase) * 1.2), Math.max(1, Math.round(o.r / S * backEase(b))), o, time);
   }
-  for (const orb of orbs) {
-    const birth = Math.max(0, Math.min(1, (time - orb.born) / 0.5));
-    if (birth <= 0) continue;
-    const scale = backEase(birth), squash = Math.sin(time * 3 + orb.phase) * 0.07, bob = Math.sin(time * 2 + orb.phase) * 2;
-    ctx.save(); ctx.translate(orb.x, orb.y + bob); ctx.scale(scale * (1 + squash), scale * (1 - squash));
-    ctx.fillStyle = orb.kind === 'bomb' ? '#14163f' : orb.kind === 'star' || orb.kind === 'super' ? '#ffd166' : orb.kind === 'magnet' ? '#a78bfa' : orb.kind === 'frost' ? '#4cc9f0' : orb.color;
-    ctx.beginPath(); ctx.arc(0, 0, orb.r, 0, Math.PI * 2); ctx.fill();
-    if (orb.kind === 'bomb') { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.stroke(); }
-    else if (orb.kind === 'star') { ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, 0, orb.r * 0.4, 0, Math.PI * 2); ctx.fill(); }
-    if (orb.kind === 'shield' && orb.hp > 1) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(0, 0, orb.r + 5, 0, Math.PI * 2); ctx.stroke(); }
-    ctx.restore();
-  }
-  for (const particle of particles) {
-    ctx.save(); ctx.globalAlpha = Math.min(1, particle.life * 1.5); ctx.translate(particle.x, particle.y); ctx.rotate(particle.rotation);
-    ctx.fillStyle = particle.color; ctx.fillRect(-particle.width / 2, -particle.height / 2, particle.width, particle.height); ctx.restore();
-  }
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = '800 20px "Nunito", sans-serif';
-  for (const item of floats) { ctx.globalAlpha = Math.min(1, item.life * 1.6); ctx.fillStyle = item.color; ctx.fillText(item.text, item.x, item.y - 14); }
+  for (const p of particles) { g.fillStyle = p.color; const s = p.life > 0.5 ? 2 : 1; g.fillRect(Math.round(p.x / S), Math.round(p.y / S), s, s); }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.imageSmoothingEnabled = false; ctx.globalAlpha = 1;
+  const sh = () => shake > 0.1 ? Math.round((Math.random() - 0.5) * shake / S) * S : 0;
+  ctx.drawImage(lowCv, sh(), sh(), lw * S, lh * S);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = '12px "Press Start 2P", monospace';
+  for (const f of floats) { ctx.globalAlpha = Math.min(1, f.life * 1.6); ctx.fillStyle = '#1a1646'; ctx.fillText(f.text, Math.round(f.x) + 2, Math.round(f.y) - 12); ctx.fillStyle = f.color; ctx.fillText(f.text, Math.round(f.x), Math.round(f.y) - 14); }
   if (comboTimer > 0 && combo > 1) {
-    ctx.save(); ctx.globalAlpha = comboTimer * 0.5; ctx.fillStyle = '#fff'; ctx.translate(W / 2, TOP + (H - TOP) / 2);
-    ctx.font = `900 ${80 + combo * 3}px "Nunito", sans-serif`; ctx.fillText(`×${combo}`, 0, 0); ctx.restore();
+    ctx.globalAlpha = comboTimer * 0.6; ctx.font = `${40 + Math.min(combo, 10) * 4}px "Press Start 2P", monospace`;
+    const cy = TOP + (H - TOP) / 2; ctx.fillStyle = '#1a1646'; ctx.fillText(`x${combo}`, W / 2 + 4, cy + 4); ctx.fillStyle = '#ffffff'; ctx.fillText(`x${combo}`, W / 2, cy);
   }
-  ctx.restore();
+  ctx.globalAlpha = 1;
 }
 
 let frameDelta = 0;
