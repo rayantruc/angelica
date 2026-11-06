@@ -1,0 +1,322 @@
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const $ = id => document.getElementById(id);
+let W, H, dpr, TOP = 76;
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  TOP = $('hud').offsetTop + $('hud').offsetHeight + 10;
+}
+window.addEventListener('resize', resize);
+resize();
+
+let best = 0;
+try { best = Number(localStorage.getItem('rc_best')) || 0; } catch (_) { /* Storage may be disabled. */ }
+const COLORS = ['#ff6b6b', '#ffd166', '#06d6a0', '#ff8fd0', '#4cc9f0', '#fff'];
+let slots = 4, rippleId = 0, refunded = false, level = 1, score = 0;
+let taps = 4, popped = 0, target = 4;
+let orbs = [], ripples = [], particles = [], links = [], floats = [];
+let chain = 0, combo = 0, comboTimer = 0, shake = 0, freeze = 0;
+let state = 'start', time = 0, lockUntil = 0;
+
+const radius = () => Math.max(60, Math.min(110, Math.min(W, H) * 0.14));
+const backEase = x => { const c = 2.70158, k = x - 1; return 1 + c * k * k * k + 1.70158 * k * k; };
+function bump(id) { const element = $(id); element.classList.remove('bump'); void element.offsetWidth; element.classList.add('bump'); }
+
+const HINTS = {
+  1: 'Heaven — 4 taps. See how many orbs one ripple can catch!',
+  2: 'Chain pops to score bigger combo points.',
+  3: 'Star orbs give you an extra tap.',
+  4: 'Purgatory: watch out for explosive bomb orbs!',
+  5: 'Shielded orbs take two ripple hits.',
+  7: 'Hell: frost orbs freeze everything in place.'
+};
+function toast(message) {
+  const element = $('toast');
+  element.textContent = message;
+  element.classList.remove('show');
+  void element.offsetWidth;
+  element.classList.add('show');
+}
+function showHint() { if (HINTS[level]) toast(HINTS[level]); }
+
+function gainTap(orb, message) {
+  taps = Math.min(7, taps + 1);
+  floats.push({ x: orb.x, y: orb.y - 24, text: message, color: '#ffd166', life: 1.5 });
+  note(9, 0.06);
+  updateHud();
+}
+function crack(orb) { confetti(orb.x, orb.y, '#fff'); note(3, 0.05); shake = Math.min(6, shake + 1); }
+
+function specialKinds() {
+  const kinds = [];
+  const add = (count, kind) => { for (let i = 0; i < count; i++) kinds.push(kind); };
+  if (level >= 3) add(1, 'star');
+  if (level >= 4) add(1 + Math.floor((level - 4) / 3), 'bomb');
+  if (level >= 5) add(Math.min(5, level - 4), 'shield');
+  if (level >= 6) add(1, 'magnet');
+  if (level >= 7) add(1, 'frost');
+  if (level >= 8) add(Math.min(3, 1 + Math.floor((level - 8) / 2)), 'super');
+  return kinds;
+}
+
+function makeOrbs(count) {
+  orbs = [];
+  const kinds = specialKinds();
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speedMultiplier = level <= 3 ? 0.6 : 1 + (level - 3) * 0.12;
+    const speed = (12 + Math.random() * 18) * speedMultiplier;
+    const kind = kinds[i] || 'normal';
+    orbs.push({
+      x: 30 + Math.random() * Math.max(1, W - 60),
+      y: TOP + 30 + Math.random() * Math.max(60, H - TOP - 60),
+      vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+      r: kind === 'bomb' || kind === 'magnet' ? 16 : 10 + Math.random() * 5,
+      color: kind === 'super' ? '#ffd166' : COLORS[i % COLORS.length],
+      phase: Math.random() * Math.PI * 2, born: time + i * 0.04,
+      kind, hp: kind === 'shield' ? 2 : 1, lastRipple: 0
+    });
+  }
+}
+
+function setup() {
+  const heaven = level <= 3;
+  const count = heaven ? 8 + level * 2 : 14 + level * 2;
+  makeOrbs(count);
+  target = heaven ? Math.ceil(count * 0.5) : Math.min(Math.ceil(count * 0.75), 4 + level * 2);
+  taps = heaven ? 4 : 3;
+  slots = taps;
+  refunded = false;
+  popped = 0;
+  ripples = [];
+  particles = [];
+  links = [];
+  floats = [];
+  chain = 0;
+  combo = 0;
+  freeze = 0;
+  state = 'play';
+  loadThemeAssets(level);
+  showHint();
+  lockUntil = performance.now() + 250;
+  updateHud();
+  showOverlay(false);
+}
+
+function updateHud() {
+  const realm = level <= 3 ? 'Heaven' : level <= 6 ? 'Purgatory' : 'Hell';
+  $('lv').textContent = `${realm} - Level ${level}`;
+  $('sc').textContent = score + (best ? ` / ${best}` : '');
+  $('pt').textContent = `${popped}/${target}`;
+  slots = Math.max(slots, taps);
+  $('dots').innerHTML = Array.from({ length: slots }, (_, i) => `<i class="${i < taps ? '' : 'off'}"></i>`).join('');
+}
+
+function showOverlay(visible, title, description, button) {
+  const overlay = $('ov');
+  if (visible) {
+    $('t1').textContent = title;
+    $('t2').textContent = description;
+    $('t3').textContent = button;
+    overlay.classList.remove('hide');
+  } else overlay.classList.add('hide');
+}
+function addRipple(x, y, maxRadius, duration = 0.95, isTap = false) {
+  ripples.push({ id: ++rippleId, x, y, max: maxRadius, life: 0, duration, r: 0, isTap });
+}
+function confetti(x, y, color) {
+  for (let i = 0; i < 14; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 60 + Math.random() * 190;
+    particles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed - 60,
+      rotation: Math.random() * 6, width: 4 + Math.random() * 5, height: 8 + Math.random() * 7, color, life: 1 });
+  }
+}
+
+function popOrb(orb, index, source) {
+  orbs.splice(index, 1);
+  popped++;
+  const points = 10 * (1 + chain) * (orb.kind === 'super' ? 3 : 1);
+  score += points;
+  note(chain);
+  chain++;
+  combo = chain;
+  comboTimer = 1;
+  links.push({ x1: source.x, y1: source.y, x2: orb.x, y2: orb.y, life: 1 });
+  const bomb = orb.kind === 'bomb';
+  addRipple(orb.x, orb.y, radius() * (bomb ? 1.9 : 0.85), bomb ? 1.15 : 0.85);
+  confetti(orb.x, orb.y, bomb ? '#ff9f1c' : orb.color);
+  if (bomb) shake = 8;
+  if (orb.kind === 'star') gainTap(orb, '+1 tap');
+  if (orb.kind === 'frost') { freeze = 3.5; toast('Time Frozen!'); note(7, 0.08); }
+  if (chain >= 5 && !refunded) { refunded = true; gainTap(orb, 'Chain bonus +1 tap'); }
+  floats.push({ x: orb.x, y: orb.y, text: `+${points}`, color: orb.color, life: 1 });
+  shake = Math.min(6, shake + 1.2);
+  bump('p1');
+  updateHud();
+}
+
+function handleTap(x, y) {
+  if (performance.now() < lockUntil) return;
+  audio();
+  if (state === 'start' || state === 'lost' || state === 'won') {
+    if (state === 'lost') { level = 1; score = 0; }
+    else if (state === 'won') level++;
+    setup();
+    return;
+  }
+  if (state !== 'play' || taps <= 0 || y < TOP) return;
+  taps--;
+  addRipple(x, y, radius(), 1.05, true);
+  note(0, 0.05);
+  updateHud();
+}
+canvas.addEventListener('pointerdown', event => {
+  event.preventDefault();
+  handleTap(event.clientX, event.clientY);
+});
+$('t3').addEventListener('click', () => handleTap(W / 2, Math.max(TOP + 1, H / 2)));
+
+function update(dt) {
+  time += dt;
+  if (freeze > 0) freeze = Math.max(0, freeze - dt);
+  for (const magnet of orbs) if (magnet.kind === 'magnet') {
+    for (const orb of orbs) {
+      if (orb === magnet) continue;
+      const dx = magnet.x - orb.x, dy = magnet.y - orb.y, distance = Math.hypot(dx, dy);
+      if (distance < 170 && distance > 12) {
+        orb.vx += dx / distance * 120 * dt;
+        orb.vy += dy / distance * 120 * dt;
+        const speed = Math.hypot(orb.vx, orb.vy);
+        if (speed > 85) { orb.vx *= 85 / speed; orb.vy *= 85 / speed; }
+      }
+    }
+  }
+  for (const orb of orbs) if (freeze <= 0) {
+    orb.x += orb.vx * dt;
+    orb.y += orb.vy * dt;
+    if (orb.x < orb.r) { orb.x = orb.r; orb.vx *= -1; }
+    if (orb.x > W - orb.r) { orb.x = W - orb.r; orb.vx *= -1; }
+    if (orb.y < TOP + orb.r) { orb.y = TOP + orb.r; orb.vy *= -1; }
+    if (orb.y > H - orb.r) { orb.y = H - orb.r; orb.vy *= -1; }
+  }
+
+  for (let k = ripples.length - 1; k >= 0; k--) {
+    const ripple = ripples[k];
+    ripple.life += dt / ripple.duration;
+    if (ripple.life >= 1) { ripples.splice(k, 1); continue; }
+    ripple.r = ripple.max * (1 - Math.pow(1 - ripple.life, 3));
+    if (ripple.life < 0.8) for (let i = orbs.length - 1; i >= 0; i--) {
+      const orb = orbs[i];
+      if (time >= orb.born + 0.3 && orb.lastRipple !== ripple.id && Math.hypot(orb.x - ripple.x, orb.y - ripple.y) < ripple.r + orb.r) {
+        if (orb.kind === 'shield' && orb.hp > 1) { orb.hp--; orb.lastRipple = ripple.id; crack(orb); }
+        else popOrb(orb, i, ripple);
+      }
+    }
+  }
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const particle = particles[i];
+    particle.x += particle.vx * dt; particle.y += particle.vy * dt; particle.vy += 380 * dt; particle.life -= dt * 1.2;
+    if (particle.life <= 0) particles.splice(i, 1);
+  }
+  for (let i = links.length - 1; i >= 0; i--) { links[i].life -= dt * 2.2; if (links[i].life <= 0) links.splice(i, 1); }
+  for (let i = floats.length - 1; i >= 0; i--) { floats[i].y -= 45 * dt; floats[i].life -= dt * 1.1; if (floats[i].life <= 0) floats.splice(i, 1); }
+  if (!ripples.length) { chain = 0; refunded = false; }
+  comboTimer = Math.max(0, comboTimer - dt * 1.3);
+  shake *= Math.pow(0.003, dt);
+
+  if (state === 'play' && taps === 0 && !ripples.length) {
+    if (score > best) best = score;
+    try { localStorage.setItem('rc_best', String(best)); } catch (_) { /* Storage is optional. */ }
+    if (popped >= target) {
+      score += 100 * level;
+      if (score > best) best = score;
+      state = 'won';
+      lockUntil = performance.now() + 600;
+      updateHud();
+      showOverlay(true, `Level ${level} Cleared!`, `You popped ${popped} of ${target}. Descend further!`, 'Next Level');
+    } else {
+      state = 'lost';
+      lockUntil = performance.now() + 600;
+      updateHud();
+      showOverlay(true, 'Game Over', `You popped ${popped} of ${target}. Final score: ${score}`, 'Try Again');
+    }
+  }
+}
+
+const GRID_GAP = 34;
+function draw() {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.globalAlpha = 1;
+  renderBackgroundAndSprites(ctx, W, H, frameDelta);
+  ctx.save();
+  if (shake > 0.1) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+  const offsetX = (W % GRID_GAP) / 2, offsetY = (H % GRID_GAP) / 2;
+  ctx.fillStyle = '#fff';
+  for (let y = offsetY; y < H; y += GRID_GAP) for (let x = offsetX; x < W; x += GRID_GAP) {
+    let px = x, py = y, strength = 0;
+    for (const ripple of ripples) {
+      const dx = x - ripple.x, dy = y - ripple.y, distance = Math.hypot(dx, dy);
+      const wave = (distance - ripple.r) / 16;
+      const influence = Math.exp(-wave * wave) * (1 - ripple.life);
+      if (influence > 0.02) { strength += influence; if (distance > 0) { px += dx / distance * influence * 9; py += dy / distance * influence * 9; } }
+    }
+    strength = Math.min(strength, 1);
+    ctx.globalAlpha = 0.12 + 0.5 * strength;
+    ctx.beginPath(); ctx.arc(px, py, 1.6 + 2.6 * strength, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  for (const link of links) {
+    ctx.globalAlpha = link.life * 0.8; ctx.strokeStyle = '#fff'; ctx.lineWidth = 3 * link.life;
+    ctx.setLineDash([2, 9]); ctx.beginPath(); ctx.moveTo(link.x1, link.y1); ctx.lineTo(link.x2, link.y2); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  for (const ripple of ripples) {
+    const alpha = 1 - ripple.life * ripple.life;
+    ctx.globalAlpha = 0.14 * alpha; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ripple.x, ripple.y, ripple.r, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = alpha; ctx.strokeStyle = '#fff'; ctx.lineWidth = 4 * (1 - ripple.life) + 1.5; ctx.stroke();
+  }
+  for (const orb of orbs) {
+    const birth = Math.max(0, Math.min(1, (time - orb.born) / 0.5));
+    if (birth <= 0) continue;
+    const scale = backEase(birth), squash = Math.sin(time * 3 + orb.phase) * 0.07, bob = Math.sin(time * 2 + orb.phase) * 2;
+    ctx.save(); ctx.translate(orb.x, orb.y + bob); ctx.scale(scale * (1 + squash), scale * (1 - squash));
+    ctx.fillStyle = orb.kind === 'bomb' ? '#14163f' : orb.kind === 'star' || orb.kind === 'super' ? '#ffd166' : orb.kind === 'magnet' ? '#a78bfa' : orb.kind === 'frost' ? '#4cc9f0' : orb.color;
+    ctx.beginPath(); ctx.arc(0, 0, orb.r, 0, Math.PI * 2); ctx.fill();
+    if (orb.kind === 'bomb') { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.stroke(); }
+    else if (orb.kind === 'star') { ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, 0, orb.r * 0.4, 0, Math.PI * 2); ctx.fill(); }
+    if (orb.kind === 'shield' && orb.hp > 1) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(0, 0, orb.r + 5, 0, Math.PI * 2); ctx.stroke(); }
+    ctx.restore();
+  }
+  for (const particle of particles) {
+    ctx.save(); ctx.globalAlpha = Math.min(1, particle.life * 1.5); ctx.translate(particle.x, particle.y); ctx.rotate(particle.rotation);
+    ctx.fillStyle = particle.color; ctx.fillRect(-particle.width / 2, -particle.height / 2, particle.width, particle.height); ctx.restore();
+  }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = '800 20px "Nunito", sans-serif';
+  for (const item of floats) { ctx.globalAlpha = Math.min(1, item.life * 1.6); ctx.fillStyle = item.color; ctx.fillText(item.text, item.x, item.y - 14); }
+  if (comboTimer > 0 && combo > 1) {
+    ctx.save(); ctx.globalAlpha = comboTimer * 0.5; ctx.fillStyle = '#fff'; ctx.translate(W / 2, TOP + (H - TOP) / 2);
+    ctx.font = `900 ${80 + combo * 3}px "Nunito", sans-serif`; ctx.fillText(`×${combo}`, 0, 0); ctx.restore();
+  }
+  ctx.restore();
+}
+
+let frameDelta = 0;
+let lastFrame = performance.now();
+loadThemeAssets(1);
+updateHud();
+function loop(now) {
+  frameDelta = Math.min(0.05, (now - lastFrame) / 1000);
+  lastFrame = now;
+  update(frameDelta);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
