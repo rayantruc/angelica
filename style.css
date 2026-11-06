@@ -41,3 +41,10 @@ canvas { display: block; image-rendering: pixelated; }
 #toast.show { animation: toast-in 3s steps(6) forwards; }
 @keyframes toast-in { 10%, 80% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; transform: translate(-50%, -6px); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+#dots.boost i:not(.off) { background: #ff9f1c; }
+#rl { display: grid; gap: 14px; margin: 0 4px 6px; }
+.relic { display: block; width: 100%; padding: 10px; border: 0; background: #fff; color: var(--ink); font: inherit; text-align: left; cursor: pointer; margin: 0;
+  box-shadow: 0 -4px 0 0 var(--ink), 0 4px 0 0 var(--ink), -4px 0 0 0 var(--ink), 4px 0 0 0 var(--ink), inset -4px -4px 0 0 rgb(0 0 0 / 12%); }
+.relic b { display: block; margin-bottom: 8px; font-size: 10px; color: var(--coral); }
+.relic span { font-size: 8px; line-height: 1.6; }
+.relic:active { transform: translateY(4px); }
