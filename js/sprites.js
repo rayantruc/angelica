@@ -1,18 +1,24 @@
 const LEVEL_THEMES = {
   heaven: {
-    bgSrc: 'assets/sprites/angel_f1.svg',
+    bgSrc: 'assets/backgrounds/level_heaven.svg',
     sprites: [
-      { f1: 'assets/sprites/angel_f1.svg', f2: 'assets/sprites/angel_f2.svg', xPct: 0.15, yPct: 0.25, scale: 0.5 },
-      { f1: 'assets/sprites/angel_f1.svg', f2: 'assets/sprites/angel_f2.svg', xPct: 0.84, yPct: 0.2, scale: 0.45 }
+      { f1: 'assets/sprites/angel_f1.svg', f2: 'assets/sprites/angel_f2.svg', xPct: 0.12, yPct: 0.28, scale: 0.48 },
+      { f1: 'assets/sprites/angel_f1.svg', f2: 'assets/sprites/angel_f2.svg', xPct: 0.84, yPct: 0.25, scale: 0.44 }
     ]
   },
   purgatory: {
-    bgSrc: 'assets/sprites/gargoyle_f1.svg',
-    sprites: [{ f1: 'assets/sprites/gargoyle_f1.svg', f2: 'assets/sprites/gargoyle_f2.svg', xPct: 0.2, yPct: 0.4, scale: 0.6 }]
+    bgSrc: 'assets/backgrounds/level_purgatory.svg',
+    sprites: [
+      { f1: 'assets/sprites/gargoyle_f1.svg', f2: 'assets/sprites/gargoyle_f2.svg', xPct: 0.18, yPct: 0.34, scale: 0.52 },
+      { f1: 'assets/sprites/gargoyle_f1.svg', f2: 'assets/sprites/gargoyle_f2.svg', xPct: 0.8, yPct: 0.68, scale: 0.56 }
+    ]
   },
   hell: {
-    bgSrc: 'assets/sprites/demon_f1.svg',
-    sprites: [{ f1: 'assets/sprites/demon_f1.svg', f2: 'assets/sprites/demon_f2.svg', xPct: 0.78, yPct: 0.7, scale: 0.65 }]
+    bgSrc: 'assets/backgrounds/level_hell.svg',
+    sprites: [
+      { f1: 'assets/sprites/demon_f1.svg', f2: 'assets/sprites/demon_f2.svg', xPct: 0.16, yPct: 0.62, scale: 0.52 },
+      { f1: 'assets/sprites/demon_f1.svg', f2: 'assets/sprites/demon_f2.svg', xPct: 0.82, yPct: 0.7, scale: 0.58 }
+    ]
   }
 };
 
